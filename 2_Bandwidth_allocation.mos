@@ -1,6 +1,12 @@
 model BandwidthAllocation
 uses "mmxprs"
 
+!!!
+! The code for this assignement must be written.
+! What follows is a copy of the Garph Coloring code that you can use to write your code.
+!!!
+
+
 !~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~!
 ! Parameters and decision variables !
 !~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~!
