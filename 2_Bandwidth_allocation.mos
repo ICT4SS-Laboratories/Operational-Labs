@@ -1,0 +1,88 @@
+model BandwidthAllocation
+uses "mmxprs"
+
+!~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~!
+! Parameters and decision variables !
+!~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~!
+
+declarations
+  N = 1..15  ! nodes
+  C = 1..15  ! colors
+
+  p = 0.4
+  E: array(N,N) of integer  ! edges
+
+  x: array(N,C) of mpvar    ! node i has color c
+  y: array(C) of mpvar      ! color c is used
+end-declarations
+
+
+! initialize edges
+forall(i in N, j in N) do
+  if i = j then
+    E(i,j) := 0   ! no self-loop
+  elif j > i then
+    if random <= p then
+       E(i,j) := 1
+       E(j,i) := 1
+    else
+       E(i,j) := 0
+       E(j,i) := 0
+    end-if
+  end-if
+end-do
+
+! print matrix E
+writeln("\nEdge matrix E:")
+forall(i in N) do
+  forall(j in N) write(E(i,j)," ")
+  writeln("")
+end-do
+
+
+!~~~~~~~~~~~~~!
+! Constraints !
+!~~~~~~~~~~~~~!
+
+! binary variables
+forall(n in N, c in C)
+  x(n,c) is_binary
+
+forall(c in C)
+  y(c) is_binary
+
+
+! each node has one color
+forall(n in N)
+  sum(c in C) x(n,c) = 1
+
+
+! color activation
+forall(n in N, c in C)
+  x(n,c) <= y(c)
+
+
+! edges constraint
+forall(i in N, j in N, c in C)
+  x(i,c) + x(j,c) <= 1 + (1 - E(i,j))
+
+
+!~~~~~~~~~~~~~~~~~~~~!
+! Objective function !
+!~~~~~~~~~~~~~~~~~~~~!
+
+minimize( sum(c in C) y(c) )
+
+
+!~~~~~~~~~!
+! Results !
+!~~~~~~~~~!
+
+! print value of solution
+writeln("\nNumber of color = ", getobjval, "\n")
+
+! print solution
+forall(n in N, c in C | getsol(x(n,c)) > 0.5)
+  writeln("Node ", n, " has color ", c)
+
+end-model

@@ -1,0 +1,4 @@
+# Ignore settings and other files
+.c9/
+out/
+.DS_Store
