@@ -1,0 +1,87 @@
+\documentclass{article}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath}
+\usepackage{amssymb}
+
+\title{Assignment 2: Bandwidth Allocation Problem}
+\author{ICT4SS - Operational Research Assignement 2}
+\date{March 2026}
+
+\begin{document}
+
+\maketitle
+
+\section{Problem Description}
+Given an undirected graph $G = (V, E)$, where nodes $V$ correspond to Tx-Rx pairs in a wireless environment and edges $E$ represent potential conflicts[cite: 8]. We must assign a frequency $f_i \in \{1, \dots, k\}$ to every node ensuring that adjacent nodes use neither the same frequency nor contiguous frequencies ($|f_i - f_j| \ge 2$)[cite: 8]. The goal is to minimize the total width of the used spectrum[cite: 9].
+
+\section{Integer Linear Programming (ILP) Formulation}
+
+\subsection{Decision Variables}
+\begin{itemize}
+    \item $x_{if} \in \{0, 1\}$: $1$ if node $i \in V$ is assigned to frequency $f \in \{1, \dots, k\}$, $0$ otherwise.
+    \item $y_f \in \{0, 1\}$: $1$ if frequency $f$ is used by at least one node, $0$ otherwise.
+\end{itemize}
+
+\subsection{Objective Function}
+Minimize the total number of frequency slots used:
+\begin{equation}
+    \min \sum_{f=1}^{k} y_f
+\end{equation}
+
+\subsection{Constraints}
+\begin{itemize}
+    \item \textbf{Unique Assignment:} Each node must be assigned exactly one frequency:
+    \begin{equation}
+        \sum_{f=1}^{k} x_{if} = 1, \quad \forall i \in V
+    \end{equation}
+
+    \item \textbf{Frequency Activation:} A frequency $f$ is marked as used if any node is assigned to it:
+    \begin{equation}
+        x_{if} \le y_f, \quad \forall i \in V, \forall f \in \{1, \dots, k\}
+    \end{equation}
+
+    \item \textbf{Conflict and Contiguity Constraints:} For every edge $(i, j) \in E$, adjacent nodes cannot use frequencies $f, f-1, f+1$:
+    \begin{itemize}
+        \item For $f=1$:
+        \begin{equation}
+            x_{i,1} + x_{j,1} + x_{j,2} \le 1
+        \end{equation}
+        \item For $1 < f < k$:
+        \begin{equation}
+            x_{if} + x_{j,f-1} + x_{j,f} + x_{j,f+1} \le 1
+        \end{equation}
+        \item For $f=k$:
+        \begin{equation}
+            x_{ik} + x_{j,k-1} + x_{j,k} \le 1
+        \end{equation}
+    \end{itemize}
+    
+    \item \textbf{Spectrum Compactness :} To avoid gaps and improve solver performance:
+    \begin{equation}
+        y_f \ge y_{f+1}, \quad \forall f \in \{1, \dots, k-1\}
+    \end{equation}
+\end{itemize}
+
+\section{Relationship with Graph Coloring}
+The Bandwidth Allocation (BA) problem is a generalization of the classic Graph Coloring problem[cite: 11, 12]. 
+
+\subsection{Theoretical Derivation}
+In standard coloring, the constraint for $(i, j) \in E$ is $|c_i - c_j| \ge 1$. In BA, the constraint is $|f_i - f_j| \ge 2$. We can establish a relationship using a linear mapping from an optimal coloring $c_i \in \{1, \dots, \chi(G)\}$.
+
+By setting:
+\begin{equation}
+    f_i = 2c_i - 1
+\end{equation}
+We observe that for any two adjacent nodes $i, j$:
+\begin{equation}
+    |f_i - f_j| = |(2c_i - 1) - (2c_j - 1)| = 2|c_i - c_j|
+\end{equation}
+Since $|c_i - c_j| \ge 1$ in a valid coloring, then $|f_i - f_j| \ge 2$, satisfying the BA requirements.
+
+\subsection{Optimal Spectrum Width}
+The resulting optimal spectrum width $W$ relates to the chromatic number $\chi(G)$ as follows:
+\begin{equation}
+    W = 2\chi(G) - 1
+\end{equation}
+
+\end{document}
