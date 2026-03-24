@@ -1,103 +1,93 @@
 model BandwidthAllocation
 uses "mmxprs"
 
-(! 
-  Logic: xif + xjf + x_j,f-1 + x_j,f+1 <= 1 for adjacent nodes [cite: 10]
-!)
-
 declarations
-  ! Parameters for the simulation
-  N_NODES = 20       ! Set to 20, 40, or 60 as required [cite: 14]
-  P_PROB = 0.2       ! Set to 0.2 or 0.4 as required 
+  NN = 20         ! Change to 40 or 60 for subsequent tests
+  p = 0.2         ! Change to 0.4 for subsequent tests
   
-  NODES = 1..N_NODES
-  ! K should be large enough to find a solution (theoretically 2*N)
-  K_MAX = 50         
-  FREQS = 1..K_MAX
+  MAX_F = 15      ! Keep at 15-20 for NN=20. Increase to 30-40 for NN=60.
 
-  E: array(NODES,NODES) of integer   ! Adjacency matrix (conflicts) 
+  NODES = 1..NN 
+  FREQS = 1..MAX_F 
 
-  x: array(NODES,FREQS) of mpvar     ! x(i,f) = 1 if node i uses frequency f [cite: 10]
-  y: array(FREQS) of mpvar           ! y(f) = 1 if frequency f is part of the used spectrum [cite: 9]
+  E: array(NODES,NODES) of integer 
+
+  x: array(NODES,FREQS) of mpvar 
+  y: array(FREQS) of mpvar       
 end-declarations
 
-!~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~!
-! 1. Random Graph Generation (Erdos-Renyi)[cite: 14]!
-!~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~!
-
-! Set a specific seed to generate different instances for the report 
-setrandseed(1) 
-
-forall(i in NODES, j in NODES | j > i) do
-  if random <= P_PROB then
-    E(i,j) := 1
-    E(j,i) := 1
-  else
-    E(i,j) := 0
-    E(j,i) := 0
+! --------------------------------------------------------
+! INITIALIZE EDGES (Random Graph Generation)
+! --------------------------------------------------------
+setrandseed(1)    ! Change this value (e.g., 2, 3, 4) to generate 3/4 instances
+forall(i in NODES, j in NODES) do
+  if i = j then
+    E(i,j) := 0   ! No self-loop
+  elif j > i then
+    if random <= p then
+       E(i,j) := 1
+       E(j,i) := 1
+    else
+       E(i,j) := 0
+       E(j,i) := 0
+    end-if
   end-if
 end-do
 
-!~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~!
-! 2. Constraints                                     !
-!~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~!
+! Print matrix E
+writeln("\nEdge matrix E:")
+forall(i in NODES) do
+  forall(j in NODES) write(E(i,j)," ")
+  writeln("")
+end-do
 
-! Binary variables declaration
-forall(i in NODES, f in FREQS) x(i,f) is_binary
+! --------------------------------------------------------
+! CONSTRAINTS
+! --------------------------------------------------------
+
+! Binary variables
+forall(n in NODES, f in FREQS) x(n,f) is_binary
 forall(f in FREQS) y(f) is_binary
 
-! Constraint: Each node must be assigned exactly one frequency 
-forall(i in NODES)
-  sum(f in FREQS) x(i,f) = 1
+! 1. Each node must have exactly one frequency
+forall(n in NODES) sum(f in FREQS) x(n,f) = 1
 
-! Constraint: Frequency activation (link x to y)
-forall(i in NODES, f in FREQS)
-  x(i,f) <= y(f)
+! 2. Frequency activation (links x to y)
+forall(n in NODES, f in FREQS) x(n,f) <= y(f)
 
-! Constraint: Bandwidth Allocation logic (No same, No contiguous) 
-! Based on your logic: x_if + x_jf + x_j,f-1 + x_j,f+1 <= 1
-forall(i, j in NODES | i < j and E(i,j) = 1) do
+! 3. Compactness constraint (Forces solver to use lower frequencies first)
+forall(f in 1..MAX_F-1) y(f) >= y(f+1)
+
+! 4. Bandwidth Allocation logic (Only for connected nodes to save memory!)
+forall(i in NODES, j in NODES | i < j and E(i,j) = 1) do
   forall(f in FREQS) do
-    if f = 1 then
-      ! Case for first frequency: no f, no f+1
-      x(i,f) + x(j,f) + x(j,f+1) <= 1
-    elif f = K_MAX then
-      ! Case for last frequency: no f, no f-1
-      x(i,f) + x(j,f-1) + x(j,f) <= 1
-    else
-      ! General case: adjacent nodes cannot use {f-1, f, f+1}
-      x(i,f) + x(j,f-1) + x(j,f) + x(j,f+1) <= 1
+    
+    ! Adjacent nodes cannot have the SAME frequency
+    x(i,f) + x(j,f) <= 1
+    
+    ! Adjacent nodes cannot have CONTIGUOUS frequencies
+    if f < MAX_F then
+       x(i,f) + x(j,f+1) <= 1
+       x(j,f) + x(i,f+1) <= 1
     end-if
+    
   end-do
 end-do
 
-! Symmetry breaking: Compel the solver to use frequencies in increasing order [cite: 10]
-forall(f in 1..K_MAX-1)
-  y(f) >= y(f+1)
-
-!~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~!
-! 3. Objective Function & Execution                  !
-!~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~!
-
-! Minimize the width of the used spectrum [cite: 9]
+! --------------------------------------------------------
+! OBJECTIVE FUNCTION
+! --------------------------------------------------------
 minimize( sum(f in FREQS) y(f) )
 
-!~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~!
-! 4. Results Output                                  !
-!~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~!
-
-writeln("\n--- Bandwidth Allocation Results ---")
-writeln("Parameters: N=", N_NODES, " p=", P_PROB)
-writeln("Optimal Spectrum Width (W) = ", getobjval)
-
-! Theoretical check with Chromatic Number relationship 
-! Note: W should be approximately 2*chi(G) - 1
-writeln("Theoretical estimate check: (W+1)/2 = ", (getobjval + 1) / 2)
-
-forall(i in NODES) do
-  forall(f in FREQS | getsol(x(i,f)) > 0.5) do
-    writeln("Node ", i, " is assigned frequency ", f)
-  end-do
-end-do
+! --------------------------------------------------------
+! RESULTS
+! --------------------------------------------------------
+if getprobstat = XPRS_OPT then
+  writeln("\nOptimal Spectrum Width (W) = ", getobjval, "\n")
+  forall(n in NODES, f in FREQS | getsol(x(n,f)) > 0.5)
+    writeln("Node ", n, " has frequency ", f)
+else
+  writeln("\nNo optimal solution found. Try increasing MAX_F.")
+end-if
 
 end-model
