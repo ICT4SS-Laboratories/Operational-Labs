@@ -1,0 +1,101 @@
+model SetCoveringAutoAll
+uses "mmxprs", "mmsystem"
+
+declarations
+  ! --------------------------------------------------------
+  ! PARAMETERS FOR THE ASSIGNMENT
+  ! --------------------------------------------------------
+  N = 60         ! Demand points
+  M = 25         ! Candidate facilities
+  R = 0.2        ! Coverage radius
+
+  DEMAND = 1..N
+  FACILITIES = 1..M
+
+  Dx, Dy: array(DEMAND) of real
+  Fx, Fy: array(FACILITIES) of real
+  c: array(FACILITIES) of real
+  A: array(DEMAND, FACILITIES) of integer
+  y: array(FACILITIES) of mpvar
+
+  ! Declare constraints with a name so we can overwrite them in the loop
+  CovCtr: array(DEMAND) of linctr
+  TotalCost: linctr
+
+  IsFeasible: boolean
+  CurrentSeed: integer
+  InstancesFound: integer
+end-declarations
+
+! Set variables as binary once and for all
+forall(j in FACILITIES) y(j) is_binary
+
+CurrentSeed := 1
+InstancesFound := 0
+
+writeln("Searching for 3 feasible instances... (N=", N, ", M=", M, ", R=", R, ")")
+writeln("This might take a few seconds, please wait...")
+
+! Main loop: continue until 3 valid instances are found
+while(InstancesFound < 3) do
+  IsFeasible := false
+  
+  ! 1. SEARCH FOR A FEASIBLE SEED
+  while(not IsFeasible) do
+    setrandseed(CurrentSeed)
+    
+    forall(i in DEMAND) do Dx(i) := random; Dy(i) := random; end-do
+    forall(j in FACILITIES) do Fx(j) := random; Fy(j) := random; c(j) := 1 + 9*random; end-do
+
+    forall(i in DEMAND, j in FACILITIES) do
+      if sqrt((Dx(i)-Fx(j))^2 + (Dy(i)-Fy(j))^2) <= R then
+        A(i,j) := 1
+      else
+        A(i,j) := 0
+      end-if
+    end-do
+
+    ! Check if there are isolated points
+    IsFeasible := true
+    forall(i in DEMAND) do
+      if sum(j in FACILITIES) A(i,j) = 0 then
+        IsFeasible := false
+        break 
+      end-if
+    end-do
+
+    if not IsFeasible then
+      CurrentSeed += 1
+    end-if
+  end-do
+
+  ! 2. SOLVE THE FOUND INSTANCE
+  writeln("\n--------------------------------------------------")
+  writeln("INSTANCE ", InstancesFound + 1, " FOUND! (Seed used: ", CurrentSeed, ")")
+  
+  ! Define constraints for this specific seed (overwriting previous ones)
+  forall(i in DEMAND) CovCtr(i) := sum(j in FACILITIES) A(i,j) * y(j) >= 1
+  TotalCost := sum(j in FACILITIES) c(j) * y(j)
+
+  minimize(TotalCost)
+
+  if getprobstat = XPRS_OPT then
+    writeln("Minimum Total Cost = ", strfmt(getobjval, 5, 2))
+    
+    write("Opened facilities: ")
+    forall(j in FACILITIES | getsol(y(j)) > 0.5) write(j, " ")
+    writeln("")
+  else
+    writeln("Unexpected error during optimization.")
+  end-if
+
+  ! 3. UPDATE COUNTERS TO SEARCH FOR THE NEXT ONE
+  InstancesFound += 1
+  CurrentSeed += 1 
+
+end-do
+
+writeln("\n==================================================")
+writeln("EXECUTION COMPLETED.")
+
+end-model

@@ -1,0 +1,104 @@
+model PartialCoveringAuto
+uses "mmxprs", "mmsystem"
+
+declarations
+  ! --------------------------------------------------------
+  ! PARAMETERS FOR THE ASSIGNMENT
+  ! --------------------------------------------------------
+  N = 60         ! Demand points
+  M = 25         ! Candidate facilities
+  R = 0.2        ! Coverage radius
+  
+  ALPHA = 0.85   ! Fraction of demand points to cover (e.g., 85%)
+
+  DEMAND = 1..N
+  FACILITIES = 1..M
+
+  Dx, Dy: array(DEMAND) of real
+  Fx, Fy: array(FACILITIES) of real
+  c: array(FACILITIES) of real
+  A: array(DEMAND, FACILITIES) of integer
+  
+  ! Decision Variables
+  y: array(FACILITIES) of mpvar   ! 1 if facility is opened
+  x: array(DEMAND) of mpvar       ! 1 if demand point is covered
+
+  ! Constraint references to overwrite them in the loop
+  CovCtr: array(DEMAND) of linctr
+  MinCoverageCtr: linctr
+  TotalCost: linctr
+
+  CurrentSeed: integer
+  InstancesFound: integer
+  
+  ! Counter for the final print (MOVED HERE TO FIX THE ERROR)
+  CoveredCount: integer
+end-declarations
+
+! Set binary variables
+forall(j in FACILITIES) y(j) is_binary
+forall(i in DEMAND) x(i) is_binary
+
+CurrentSeed := 1
+InstancesFound := 0
+
+writeln("Running 3 instances for PARTIAL COVERING...")
+writeln("Parameters: N=", N, " | M=", M, " | R=", R, " | Alpha=", ALPHA*100, "%")
+
+while(InstancesFound < 3) do
+  
+  ! 1. GENERATE RANDOM MAP
+  setrandseed(CurrentSeed)
+  forall(i in DEMAND) do Dx(i) := random; Dy(i) := random; end-do
+  forall(j in FACILITIES) do Fx(j) := random; Fy(j) := random; c(j) := 1 + 9*random; end-do
+
+  ! Calculate distance matrix
+  forall(i in DEMAND, j in FACILITIES) do
+    if sqrt((Dx(i)-Fx(j))^2 + (Dy(i)-Fy(j))^2) <= R then
+      A(i,j) := 1
+    else
+      A(i,j) := 0
+    end-if
+  end-do
+
+  ! 2. DEFINE CONSTRAINTS FOR THIS SEED
+  
+  ! Constraint 1: A point can be covered (x=1) ONLY IF a facility covering it is open
+  forall(i in DEMAND) 
+    CovCtr(i) := sum(j in FACILITIES) A(i,j) * y(j) >= x(i)
+
+  ! Constraint 2: We must cover at least ALPHA fraction of total points
+  MinCoverageCtr := sum(i in DEMAND) x(i) >= ALPHA * N
+
+  ! Objective: Minimize cost of opened facilities
+  TotalCost := sum(j in FACILITIES) c(j) * y(j)
+
+  minimize(TotalCost)
+
+  ! 3. CHECK RESULTS
+  if getprobstat = XPRS_OPT then
+    writeln("\n--------------------------------------------------")
+    writeln("INSTANCE ", InstancesFound + 1, " (Seed: ", CurrentSeed, ")")
+    writeln("Total Cost = ", strfmt(getobjval, 5, 2))
+    
+    ! Count how many points we actually covered
+    CoveredCount := 0
+    forall(i in DEMAND | getsol(x(i)) > 0.5) CoveredCount += 1
+    
+    writeln("Points Covered = ", CoveredCount, " out of ", N, " (Required minimum: ", ALPHA*N, ")")
+    
+    write("Opened Facilities: ")
+    forall(j in FACILITIES | getsol(y(j)) > 0.5) write(j, " ")
+    writeln("")
+    
+    InstancesFound += 1
+  end-if
+  
+  ! Move to the next seed to find the next instance
+  CurrentSeed += 1 
+
+end-do
+
+writeln("\n==================================================")
+writeln("DONE! You have all the data for the Partial Covering section.")
+end-model
