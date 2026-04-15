@@ -1,0 +1,59 @@
+model BvNDecomposition
+uses "mmxprs", "mmsystem"
+
+declarations
+  N = 6              ! 6x6 matrix
+  K_MAX = 50         ! Maximum possible number of sub-permutation matrices needed
+  
+  NODES = 1..N
+  MATRICES = 1..K_MAX
+  
+  B: array(NODES, NODES) of integer
+  
+  a: array(NODES, NODES, MATRICES) of mpvar
+  y: array(MATRICES) of mpvar
+end-declarations
+
+! Generate 6x6 random matrix with entries in {0,1,2,...,12}
+setrandseed(1)
+writeln("Matrix B:")
+forall(i in NODES) do
+  forall(j in NODES) do
+    B(i,j) := round(random * 12)
+    write(strfmt(B(i,j), 3))
+  end-do
+  writeln("")
+end-do
+
+! Variables definition
+forall(h in MATRICES) y(h) is_binary
+forall(i in NODES, j in NODES, h in MATRICES) a(i,j,h) is_binary
+
+! Constraint 1: The sum of sub-permutation matrices must exactly reconstruct B
+forall(i in NODES, j in NODES)
+  sum(h in MATRICES) a(i,j,h) = B(i,j)
+
+! Constraint 2: Sub-permutation row constraint (max one '1' per row)
+forall(i in NODES, h in MATRICES)
+  sum(j in NODES) a(i,j,h) <= y(h)
+
+! Constraint 3: Sub-permutation column constraint (max one '1' per column)
+forall(j in NODES, h in MATRICES)
+  sum(i in NODES) a(i,j,h) <= y(h)
+
+! Symmetry breaking: Force solver to use matrices in order (y1 >= y2 >= y3...)
+! This dramatically reduces calculation time for the B&B tree
+forall(h in 1..K_MAX-1)
+  y(h) >= y(h+1)
+
+! Objective: Minimize employed matrices
+minimize(sum(h in MATRICES) y(h))
+
+if getprobstat = XPRS_OPT then
+  writeln("\nBvN Decomposition successful!")
+  writeln("Minimum number of matrices K = ", getobjval)
+else
+  writeln("\nIncrease K_MAX, no solution found.")
+end-if
+
+end-model
