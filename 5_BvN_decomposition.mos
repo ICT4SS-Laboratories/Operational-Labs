@@ -1,59 +1,130 @@
-model BvNDecomposition
-uses "mmxprs", "mmsystem"
+!@encoding CP1252
+model BvN_Decomposition
+uses "mmxprs"
 
 declarations
-  N = 6              ! 6x6 matrix
-  K_MAX = 50         ! Maximum possible number of sub-permutation matrices needed
-  
+  N = 6
   NODES = 1..N
-  MATRICES = 1..K_MAX
-  
-  B: array(NODES, NODES) of integer
-  
-  a: array(NODES, NODES, MATRICES) of mpvar
-  y: array(MATRICES) of mpvar
+  B: array(NODES,NODES) of integer
+  row_sum: array(NODES) of integer
+  col_sum: array(NODES) of integer
+  K_upper: integer
 end-declarations
 
-! Generate 6x6 random matrix with entries in {0,1,2,...,12}
-setrandseed(1)
+! --------------------------------------------------------
+! GENERA MATRICE 6x6 CON VALORI IN {0,1,...,12}
+! --------------------------------------------------------
+setrandseed(1)    ! Cambiare seed per generare istanze diverse
+forall(i in NODES, j in NODES)
+  B(i,j) := round(12 * random)
+
+! Stampa matrice B
 writeln("Matrix B:")
 forall(i in NODES) do
-  forall(j in NODES) do
-    B(i,j) := round(random * 12)
-    write(strfmt(B(i,j), 3))
-  end-do
+  forall(j in NODES) write(B(i,j), "\t")
   writeln("")
 end-do
 
-! Variables definition
-forall(h in MATRICES) y(h) is_binary
-forall(i in NODES, j in NODES, h in MATRICES) a(i,j,h) is_binary
+! --------------------------------------------------------
+! CALCOLA UPPER BOUND: K = max(max_row_sum, max_col_sum)
+! (per BvN questo e' anche l'ottimo teorico)
+! --------------------------------------------------------
+K_upper := 0
+forall(i in NODES) do
+  row_sum(i) := sum(j in NODES) B(i,j)
+  writeln("Row ", i, " sum = ", row_sum(i))
+  if row_sum(i) > K_upper then
+    K_upper := row_sum(i)
+  end-if
+end-do
+forall(j in NODES) do
+  col_sum(j) := sum(i in NODES) B(i,j)
+  writeln("Col ", j, " sum = ", col_sum(j))
+  if col_sum(j) > K_upper then
+    K_upper := col_sum(j)
+  end-if
+end-do
 
-! Constraint 1: The sum of sub-permutation matrices must exactly reconstruct B
+writeln("\nUpper bound K = ", K_upper)
+writeln("Variables: ", N*N*K_upper + K_upper, " binary")
+writeln("")
+
+! --------------------------------------------------------
+! MODELLO ILP
+! --------------------------------------------------------
+declarations
+  H = 1..K_upper
+  a: array(NODES,NODES,H) of mpvar    ! a(i,j,h) = 1 se A_h ha un 1 in (i,j)
+  Y: array(H) of mpvar                ! Y(h) = 1 se la matrice A_h e' usata
+end-declarations
+
+! ---- Variabili binarie ----
+forall(i in NODES, j in NODES, h in H)
+  a(i,j,h) is_binary
+forall(h in H)
+  Y(h) is_binary
+
+! ---- Vincoli ----
+
+! 1. Ogni riga di A_h ha al piu' un 1 (sub-permutation per righe)
+forall(i in NODES, h in H)
+  sum(j in NODES) a(i,j,h) <= 1
+
+! 2. Ogni colonna di A_h ha al piu' un 1 (sub-permutation per colonne)
+forall(j in NODES, h in H)
+  sum(i in NODES) a(i,j,h) <= 1
+
+! 3. Decomposizione: B(i,j) = sum_h a(i,j,h)
 forall(i in NODES, j in NODES)
-  sum(h in MATRICES) a(i,j,h) = B(i,j)
+  sum(h in H) a(i,j,h) = B(i,j)
 
-! Constraint 2: Sub-permutation row constraint (max one '1' per row)
-forall(i in NODES, h in MATRICES)
-  sum(j in NODES) a(i,j,h) <= y(h)
+! 4. Attivazione (aggregata): se A_h non e' usata, tutti a(i,j,h) = 0
+!    Ogni sub-perm ha al massimo N uni, quindi bound stretto
+forall(h in H)
+  sum(i in NODES, j in NODES) a(i,j,h) <= N * Y(h)
 
-! Constraint 3: Sub-permutation column constraint (max one '1' per column)
-forall(j in NODES, h in MATRICES)
-  sum(i in NODES) a(i,j,h) <= y(h)
+! 5. Elimina variabili dove B(i,j) = 0 (a non puo' mai essere 1)
+forall(i in NODES, j in NODES, h in H | B(i,j) = 0)
+  a(i,j,h) = 0
 
-! Symmetry breaking: Force solver to use matrices in order (y1 >= y2 >= y3...)
-! This dramatically reduces calculation time for the B&B tree
-forall(h in 1..K_MAX-1)
-  y(h) >= y(h+1)
+! 6. Symmetry breaking: usa le matrici in ordine
+forall(h in 1..K_upper-1)
+  Y(h) >= Y(h+1)
 
-! Objective: Minimize employed matrices
-minimize(sum(h in MATRICES) y(h))
+! ---- Parametri solver ----
+setparam("XPRS_MAXTIME", 120)      ! timeout 2 minuti
+setparam("XPRS_MIPRELSTOP", 0.005) ! stop se gap < 0.5%
 
-if getprobstat = XPRS_OPT then
-  writeln("\nBvN Decomposition successful!")
-  writeln("Minimum number of matrices K = ", getobjval)
+! ---- Risoluzione ----
+minimize(sum(h in H) Y(h))
+
+! ---- Risultati ----
+if getprobstat = XPRS_OPT or getprobstat = XPRS_UNF then
+  writeln("\n========================================")
+  writeln("Minimum sub-permutation matrices K = ", getobjval)
+  writeln("========================================\n")
+
+  ! Stampa ogni matrice A_h usata
+  forall(h in H | getsol(Y(h)) > 0.5) do
+    writeln("Sub-permutation matrix A_", h, ":")
+    forall(i in NODES) do
+      forall(j in NODES)
+        write(round(getsol(a(i,j,h))), " ")
+      writeln("")
+    end-do
+    writeln("")
+  end-do
+
+  ! Verifica: ricostruisci B e confronta
+  writeln("Verification (reconstructed B):")
+  forall(i in NODES) do
+    forall(j in NODES) do
+      write(round(sum(h in H) getsol(a(i,j,h))), "\t")
+    end-do
+    writeln("")
+  end-do
 else
-  writeln("\nIncrease K_MAX, no solution found.")
+  writeln("\nNo feasible solution found.")
 end-if
 
 end-model
