@@ -1,0 +1,120 @@
+model CapacitatedCovering_FixedCost
+uses "mmxprs", "mmsystem"
+
+declarations
+  N     = 40      ! Demand points       (set to 40 for Config. 2)
+  M     = 20      ! Candidate facilities (set to 20 for Config. 2)
+  R_cov = 0.2    ! Coverage radius     (set to 0.20 for Config. 2)
+  k     = 10.0    ! Service cost coefficient
+
+  DEMAND     = 1..N
+  FACILITIES = 1..M
+
+  t_start, t_end: real
+
+  Dx, Dy: array(DEMAND)     of real
+  Fx, Fy: array(FACILITIES) of real
+
+  D:    array(DEMAND)            of integer ! Demand qty D_d ~ Uniform[5, 20]
+  W:    array(FACILITIES)        of integer ! Capacity   W_f ~ Uniform[50, 150]
+  C:    array(FACILITIES)        of real    ! Opening cost C_f ~ Uniform[10, 50]
+  S:    array(DEMAND,FACILITIES) of real    ! Fixed service cost per connection
+  Rmat: array(DEMAND,FACILITIES) of integer ! Coverage indicator R_{f,d}
+
+  x: array(DEMAND, FACILITIES) of mpvar ! Fraction of demand d served by f
+  y: array(FACILITIES)         of mpvar ! 1 if facility f is opened
+  z: array(DEMAND, FACILITIES) of mpvar ! 1 if facility f serves demand d at all
+ 
+  IsFeasible: boolean
+  CurrentSeed: integer
+end-declarations
+
+CurrentSeed := 28
+IsFeasible := false
+
+! Search a seed where every demand point has at least one in-range facility
+while(not IsFeasible) do
+  setrandseed(CurrentSeed)
+
+  forall(i in DEMAND) do
+    Dx(i) := random; Dy(i) := random
+    D(i)  := 5 + round(random * 15)
+  end-do
+
+  forall(j in FACILITIES) do
+    Fx(j) := random; Fy(j) := random
+    W(j)  := 50 + round(random * 100)
+    C(j)  := 10 + random * 40
+  end-do
+
+  forall(i in DEMAND, j in FACILITIES) do
+    if sqrt((Dx(i)-Fx(j))^2 + (Dy(i)-Fy(j))^2) <= R_cov then
+      Rmat(i,j) := 1
+    else
+      Rmat(i,j) := 0
+    end-if
+    S(i,j) := k * sqrt((Dx(i)-Fx(j))^2 + (Dy(i)-Fy(j))^2)
+  end-do
+
+  IsFeasible := true
+  forall(i in DEMAND) do
+    if sum(j in FACILITIES) Rmat(i,j) = 0 then
+      IsFeasible := false
+      break
+    end-if
+  end-do
+
+  if not IsFeasible then
+    CurrentSeed += 1
+  end-if
+end-do
+
+! Variable domains
+forall(j in FACILITIES) y(j) is_binary
+forall(i in DEMAND, j in FACILITIES) z(i,j) is_binary
+! x is continuous in [0, 1]
+
+! (1) Full coverage via in-range facilities only
+forall(i in DEMAND)
+  sum(j in FACILITIES) Rmat(i,j) * x(i,j) = 1
+
+! (2) Capacity constraint
+forall(j in FACILITIES)
+  sum(i in DEMAND) D(i) * x(i,j) <= W(j) * y(j)
+
+! (3) Service requires an open facility
+forall(i in DEMAND, j in FACILITIES)
+  x(i,j) <= y(j)
+
+! (4) Linking: x(i,j) > 0 forces z(i,j) = 1
+forall(i in DEMAND, j in FACILITIES)
+  x(i,j) <= z(i,j)
+
+! Objective: opening costs + fixed service costs per active connection
+TotalCost := sum(j in FACILITIES) C(j) * y(j) +
+             sum(i in DEMAND, j in FACILITIES) S(i,j) * z(i,j)
+
+t_start := gettime
+minimize(TotalCost)
+t_end := gettime
+
+writeln("\nParameters: N=", N, ", M=", M, ", R=", R_cov)
+writeln("Using random seed: ", CurrentSeed)
+
+if getprobstat = XPRS_OPT then
+  writeln("Capacitated Covering (Fixed Cost) - Optimal Solution Found")
+  writeln("Total Cost: ", strfmt(getobjval, 8, 2))
+  forall(j in FACILITIES | getsol(y(j)) > 0.5) do
+    writeln("Facility ", j, " opened  (Capacity: ", W(j), ")")
+    write("  Serving demand points: ")
+    forall(i in DEMAND | getsol(x(i,j)) > 0.001)
+      write(i, " (", strfmt(getsol(x(i,j))*100, 4, 1), "%)  ")
+    writeln("")
+  end-do
+else
+  writeln("Infeasible. Check capacity and coverage conditions.")
+end-if
+
+writeln("Computational Time: ", strfmt(t_end - t_start, 5, 4), " seconds")
+
+end-model
