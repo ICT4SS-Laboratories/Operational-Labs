@@ -1,0 +1,93 @@
+model BandwidthAllocation
+uses "mmxprs"
+
+declarations
+  NN = 20         ! Change to 40 or 60 for subsequent tests
+  p = 0.2         ! Change to 0.4 for subsequent tests
+  
+  MAX_F = 15      ! Keep at 15-20 for NN=20. Increase to 30-40 for NN=60.
+
+  NODES = 1..NN 
+  FREQS = 1..MAX_F 
+
+  E: array(NODES,NODES) of integer 
+
+  x: array(NODES,FREQS) of mpvar 
+  y: array(FREQS) of mpvar       
+end-declarations
+
+! --------------------------------------------------------
+! INITIALIZE EDGES (Random Graph Generation)
+! --------------------------------------------------------
+setrandseed(1)    ! Change this value (e.g., 2, 3, 4) to generate 3/4 instances
+forall(i in NODES, j in NODES) do
+  if i = j then
+    E(i,j) := 0   ! No self-loop
+  elif j > i then
+    if random <= p then
+       E(i,j) := 1
+       E(j,i) := 1
+    else
+       E(i,j) := 0
+       E(j,i) := 0
+    end-if
+  end-if
+end-do
+
+! Print matrix E
+writeln("\nEdge matrix E:")
+forall(i in NODES) do
+  forall(j in NODES) write(E(i,j)," ")
+  writeln("")
+end-do
+
+! --------------------------------------------------------
+! CONSTRAINTS
+! --------------------------------------------------------
+
+! Binary variables
+forall(n in NODES, f in FREQS) x(n,f) is_binary
+forall(f in FREQS) y(f) is_binary
+
+! 1. Each node must have exactly one frequency
+forall(n in NODES) sum(f in FREQS) x(n,f) = 1
+
+! 2. Frequency activation (links x to y)
+forall(n in NODES, f in FREQS) x(n,f) <= y(f)
+
+! 3. Compactness constraint (Forces solver to use lower frequencies first)
+forall(f in 1..MAX_F-1) y(f) >= y(f+1)
+
+! 4. Bandwidth Allocation logic (Only for connected nodes to save memory!)
+forall(i in NODES, j in NODES | i < j and E(i,j) = 1) do
+  forall(f in FREQS) do
+    
+    ! Adjacent nodes cannot have the SAME frequency
+    x(i,f) + x(j,f) <= 1
+    
+    ! Adjacent nodes cannot have CONTIGUOUS frequencies
+    if f < MAX_F then
+       x(i,f) + x(j,f+1) <= 1
+       x(j,f) + x(i,f+1) <= 1
+    end-if
+    
+  end-do
+end-do
+
+! --------------------------------------------------------
+! OBJECTIVE FUNCTION
+! --------------------------------------------------------
+minimize( sum(f in FREQS) y(f) )
+
+! --------------------------------------------------------
+! RESULTS
+! --------------------------------------------------------
+if getprobstat = XPRS_OPT then
+  writeln("\nOptimal Spectrum Width (W) = ", getobjval, "\n")
+  forall(n in NODES, f in FREQS | getsol(x(n,f)) > 0.5)
+    writeln("Node ", n, " has frequency ", f)
+else
+  writeln("\nNo optimal solution found. Try increasing MAX_F.")
+end-if
+
+end-model
