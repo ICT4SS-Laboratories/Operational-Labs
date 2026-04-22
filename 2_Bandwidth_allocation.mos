@@ -2,92 +2,162 @@ model BandwidthAllocation
 uses "mmxprs"
 
 declarations
-  NN = 20         ! Change to 40 or 60 for subsequent tests
-  p = 0.2         ! Change to 0.4 for subsequent tests
-  
-  MAX_F = 15      ! Keep at 15-20 for NN=20. Increase to 30-40 for NN=60.
-
-  NODES = 1..NN 
-  FREQS = 1..MAX_F 
-
-  E: array(NODES,NODES) of integer 
-
-  x: array(NODES,FREQS) of mpvar 
-  y: array(FREQS) of mpvar       
+  NN = 60
+  p = 0.4
+  NODES = 1..NN
+  K_MAX = 100                       ! bound iniziale largo per dichiarazione
+  FREQS_ALL = 1..K_MAX
+  E: array(NODES,NODES) of integer
+  greedy_freq: array(NODES) of integer
+  greedy_W: integer
+  num_edges: integer
+  MAX_F: integer
+  ! variabili ausiliarie per il greedy (dichiarate qui, non nel loop)
+  f_try: integer
+  feasible: boolean
+  ! variabili MIP dichiarate sul bound K_MAX, uso solo fino a MAX_F
+  x: array(NODES, FREQS_ALL) of mpvar
+  y: array(FREQS_ALL) of mpvar
 end-declarations
 
 ! --------------------------------------------------------
-! INITIALIZE EDGES (Random Graph Generation)
+! GENERATE GRAPH
 ! --------------------------------------------------------
-setrandseed(1)    ! Change this value (e.g., 2, 3, 4) to generate 3/4 instances
+setrandseed(1)
 forall(i in NODES, j in NODES) do
   if i = j then
-    E(i,j) := 0   ! No self-loop
+    E(i,j) := 0
   elif j > i then
     if random <= p then
-       E(i,j) := 1
-       E(j,i) := 1
+       E(i,j) := 1; E(j,i) := 1
     else
-       E(i,j) := 0
-       E(j,i) := 0
+       E(i,j) := 0; E(j,i) := 0
     end-if
   end-if
 end-do
 
-! Print matrix E
 writeln("\nEdge matrix E:")
 forall(i in NODES) do
   forall(j in NODES) write(E(i,j)," ")
   writeln("")
 end-do
 
+num_edges := sum(i in NODES, j in NODES | j > i) E(i,j)
+writeln("\nNodes: ", NN, "  Edges: ", num_edges)
+
 ! --------------------------------------------------------
-! CONSTRAINTS
+! GREEDY HEURISTIC (upper bound su W)
 ! --------------------------------------------------------
+forall(n in NODES) greedy_freq(n) := 0
 
-! Binary variables
-forall(n in NODES, f in FREQS) x(n,f) is_binary
-forall(f in FREQS) y(f) is_binary
-
-! 1. Each node must have exactly one frequency
-forall(n in NODES) sum(f in FREQS) x(n,f) = 1
-
-! 2. Frequency activation (links x to y)
-forall(n in NODES, f in FREQS) x(n,f) <= y(f)
-
-! 3. Compactness constraint (Forces solver to use lower frequencies first)
-forall(f in 1..MAX_F-1) y(f) >= y(f+1)
-
-! 4. Bandwidth Allocation logic (Only for connected nodes to save memory!)
-forall(i in NODES, j in NODES | i < j and E(i,j) = 1) do
-  forall(f in FREQS) do
-    
-    ! Adjacent nodes cannot have the SAME frequency
-    x(i,f) + x(j,f) <= 1
-    
-    ! Adjacent nodes cannot have CONTIGUOUS frequencies
-    if f < MAX_F then
-       x(i,f) + x(j,f+1) <= 1
-       x(j,f) + x(i,f+1) <= 1
+forall(n in NODES) do
+  f_try := 1
+  feasible := false
+  while (not feasible) do
+    feasible := true
+    forall(m in NODES | m < n and E(n,m) = 1) do
+      if greedy_freq(m) = f_try or
+         greedy_freq(m) = f_try - 1 or
+         greedy_freq(m) = f_try + 1 then
+        feasible := false
+      end-if
+    end-do
+    if not feasible then
+      f_try := f_try + 1
     end-if
-    
+  end-do
+  greedy_freq(n) := f_try
+end-do
+
+greedy_W := 0
+forall(n in NODES)
+  if greedy_freq(n) > greedy_W then
+    greedy_W := greedy_freq(n)
+  end-if
+
+writeln("\nGreedy upper bound: W = ", greedy_W)
+forall(n in NODES)
+  writeln("  Node ", n, " -> freq ", greedy_freq(n), " (greedy)")
+
+! --------------------------------------------------------
+! ILP MODEL
+! --------------------------------------------------------
+MAX_F := greedy_W
+
+! Binary variables (solo fino a MAX_F)
+forall(n in NODES, f in 1..MAX_F) x(n,f) is_binary
+forall(f in 1..MAX_F) y(f) is_binary
+
+! Le variabili oltre MAX_F le fisso a 0 (non uso le frequenze oltre)
+forall(n in NODES, f in MAX_F+1..K_MAX) x(n,f) = 0
+forall(f in MAX_F+1..K_MAX) y(f) = 0
+
+! 1. Ogni nodo ha esattamente una frequenza
+forall(n in NODES)
+  sum(f in 1..MAX_F) x(n,f) = 1
+
+! 2. Attivazione frequenza
+forall(n in NODES, f in 1..MAX_F)
+  x(n,f) <= y(f)
+
+! 3. Symmetry breaking: usa le frequenze basse prima
+forall(f in 1..MAX_F-1)
+  y(f) >= y(f+1)
+
+! 4. Fissa nodo 1 alla frequenza 1
+x(1,1) = 1
+
+! 5. Vincoli di bandwidth (compattati)
+forall(i in NODES, j in NODES | i < j and E(i,j) = 1) do
+  forall(f in 1..MAX_F) do
+    if f < MAX_F then
+      x(i,f) + x(j,f) + x(j,f+1) <= 1
+      x(j,f) + x(i,f) + x(i,f+1) <= 1
+    else
+      x(i,f) + x(j,f) <= 1
+    end-if
   end-do
 end-do
 
-! --------------------------------------------------------
-! OBJECTIVE FUNCTION
-! --------------------------------------------------------
-minimize( sum(f in FREQS) y(f) )
 
-! --------------------------------------------------------
-! RESULTS
-! --------------------------------------------------------
+
+! ---- Parametri solver ----
+setparam("XPRS_MAXTIME", 900)
+setparam("XPRS_MIPRELSTOP", 0.01)
+
+! ---- Risoluzione ----
+minimize(sum(f in 1..MAX_F) y(f))
+
+! ---- Risultati ----
 if getprobstat = XPRS_OPT then
-  writeln("\nOptimal Spectrum Width (W) = ", getobjval, "\n")
-  forall(n in NODES, f in FREQS | getsol(x(n,f)) > 0.5)
-    writeln("Node ", n, " has frequency ", f)
+  writeln("\nOptimal Spectrum Width W = ", getobjval, "\n")
+elif getprobstat = XPRS_UNF then
+  writeln("\nBest solution found (time limit): W = ", getobjval, "\n")
 else
-  writeln("\nNo optimal solution found. Try increasing MAX_F.")
+  writeln("\nNo feasible solution found.")
 end-if
 
+forall(n in NODES, f in 1..MAX_F | getsol(x(n,f)) > 0.5)
+  writeln("Node ", n, " -> freq ", f)
+
 end-model
+
+
+
+
+
+
+!la parte su greedy euristi è nuova rispetto al codice iniziale che ti avevo caricato no? vabbe tanto è veloce
+
+
+!Claude ha risposto: Sì, esatto, è nuova.
+!Sì, esatto, è nuova. Nel codice originale non c'era.
+
+!L'ho aggiunta perché svolge due funzioni utili:
+
+!La prima è calcolare automaticamente MAX_F invece di sceglierlo a mano. Tu avevi scritto nel commento "Keep at 15-20 for NN=20. Increase to 30-40 for NN=60" — il greedy elimina questo problema perché trova da solo un upper bound stretto, qualunque siano NN e p. Così non rischi né di mettere un MAX_F troppo basso (problema infeasible) né troppo alto (variabili inutili che rallentano).
+
+!La seconda era fornire il warm-start al solver, ma visto che sethint non funziona nella tua versione di Mosel, questa parte è saltata. Il greedy ora serve "solo" a dimensionare MAX_F, ma è comunque il contributo più importante — in pochi millisecondi ti dà un bound molto vicino all'ottimo.
+
+!Se vuoi, potresti anche semplificare togliendo il greedy e mettendo MAX_F a mano come nel codice originale, ma dovresti indovinare il valore giusto ogni volta che cambi NN/p/seed. Tanto vale lasciare il greedy visto che, come dici, è veloce.
+
