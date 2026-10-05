@@ -1,1 +1,1 @@
-In this repo you can find the Mosel codes for the lab assignement. Later, will be present also the code for project.
+In this repo you can find the Mosel codes for "operational research" lab's.
